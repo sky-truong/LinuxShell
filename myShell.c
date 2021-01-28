@@ -8,8 +8,6 @@
 
 #define LINE_LN 256
 #define WORD_LN 50
-#define LSH_TOK_BUFSIZE 64
-#define LSH_TOK_DELIM " \t\r\n\a"
 
 /**
  * Program: myShell
@@ -150,6 +148,8 @@ int main(int argc, char *argv[]) {
         /* Parse arguments */
         count = getArgsCount(line);
         args = getArgs(line, count);
+
+        /* Forking */
         forkProcess(args, count);
 
         /* Free previous data */
