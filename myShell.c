@@ -12,7 +12,7 @@
 /**
  * Program: myShell
  * Author: Pham Sky Truong
- * Date of Last Revision: Jan 29th, 2021
+ * Date of Last Revision: Jan 30th, 2021
  * Summary: A Linux C Shell 
  * References: Example files from CIS*3110
  */
@@ -45,7 +45,7 @@ int runShell(char *input) {
  * Count number of args in the command 
  */
 int getArgsCount(char *line) {
-    const char s[2] = " ";
+    const char s[10] = " \t\r\n\a";
     char *token;
     int count = 0;
     char ptr[strlen(line)+1];
@@ -114,6 +114,7 @@ char *getLine(void) {
 
 /**
  * Signal handler to reap child processes
+ * References: https://fedemengo.github.io/blog/2018/02/SIGCHLD-handler.html
  */
 void killZombies(int signo) {
     pid_t childpid;
@@ -172,7 +173,7 @@ void forkProcess(char **args, int isBackground) {
             // Child is NOT a background process, parent will be blocked
             // and wait until child exits or terminated by a signal
             if(!isBackground) {
-                // isBackground = 0;
+                // Source: https://brennan.io/2015/01/16/write-a-shell-in-c/
                 do {
                     waitpid(childpid, &status, WUNTRACED);
                 } while(!WIFEXITED(status) && !WIFSIGNALED(status));
@@ -197,7 +198,6 @@ int main(int argc, char *argv[]) {
 
     char *line = NULL;
     char **args = NULL;
-    // char **params = NULL;
     int count;    
     int run = 1;
     int isBackground;
