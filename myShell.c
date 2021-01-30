@@ -5,27 +5,40 @@
 #include <sys/wait.h>    /* Wait for Process Termination */
 #include <errno.h>       /* Errors */
 #include <string.h>     /* Strings */
+#include <signal.h>     /* Signals */
 
 #define LINE_LN 256
-#define WORD_LN 50
-#define LSH_TOK_BUFSIZE 64
-#define LSH_TOK_DELIM " \t\r\n\a"
 
 /**
  * Program: myShell
  * Author: Pham Sky Truong
- * Date of Last Revision: Jan 27th, 2021
+ * Date of Last Revision: Jan 29th, 2021
  * Summary: A Linux C Shell 
  * References: Example files from CIS*3110
  */
 
-/* Error check for args array */
+/** 
+ * Extra function
+ * Error check for args array 
+ */
 void printArgs(char **args, int count) {
     if(*args != NULL) {
         for(int i = 0; i < count+1; i++) {
             printf("args[%d]: %s\n", i, args[i]);
         }
     }
+}
+
+/**
+ * Check if user wants to exit shell
+ */
+int runShell(char *input) {
+    if(strncmp(input,"exit",4) == 0 || 
+        strncmp(input,"quit",4) == 0 || 
+        strncmp(input,"q",1) == 0) {
+            return 0;
+        }
+    return 1;
 }
 
 /**
@@ -55,11 +68,12 @@ int getArgsCount(char *line) {
 /** 
  * Return 2D array of args
  */
-char **getArgs(char *line, int count) {
+char **getArgs(char *line, int count, int *isBackground) {
     const char s[10] = " \t\r\n\a";
     char *token;
     char **args = malloc(sizeof(char*) * (count+1));
     int index = 0;
+    *isBackground = 0; // Default foreground process
 
     if(!args) {
         fprintf(stderr, "Error: malloc error in getArgs\n");
@@ -71,8 +85,12 @@ char **getArgs(char *line, int count) {
 
     /* walk through other tokens */
     while(token != NULL) {
-        args[index] = token;
-        index++;
+        if(strncmp(token,"&",1) == 0) { // Asserts background process
+            *isBackground = 1;
+        } else {
+            args[index] = token;
+            index++;
+        }
         token = strtok(NULL, s);
     }
     args[index] = NULL;
@@ -95,11 +113,36 @@ char *getLine(void) {
 }
 
 /**
+ * Signal handler to reap child processes
+ */
+void killZombies(int signo) {
+    pid_t childpid;
+    int status;
+
+    while((childpid = waitpid(-1, &status, WNOHANG)) > 0) {
+        printf("child %d terminates\n", childpid);
+    }
+}
+
+/**
  * Forking process
  */
-void forkProcess(char **args, int count) {
+void forkProcess(char **args, int isBackground) {
     pid_t childpid;
-    int status = 0;
+    int status;
+
+    /**
+     * Set up signal handler
+     */
+    struct sigaction sigact;
+    sigact.sa_flags = 0;
+    sigemptyset(&sigact.sa_mask);
+
+    sigact.sa_handler = killZombies;
+    if(sigaction(SIGCHLD, &sigact, NULL) < 0) {
+        perror("sigaction() failed");
+        exit(1);
+    }
 
     /**
      * Create a new process
@@ -116,17 +159,45 @@ void forkProcess(char **args, int count) {
          */
         if(childpid == 0) {
             status = execvp(args[0], args);
+            // printf("CHILD: My pid is: %d\n", getpid());
             exit(status);
+            // if(!isBackground) {
+            //     status = execvp(args[0], args);
+            //     // printf("CHILD: My pid is: %d\n", getpid());
+            //     exit(status);
+            // } else {
+            //     setpgid(0,0);
+            //     status = execvp(args[0], args);
+            //     // printf("CHILD: My pid is: %d\n", getpid());
+            //     exit(status);
+
+            //     // for(int i = 0; i < 10; i++) {
+            //     //     printf("CHILD i: %d\n",i);
+            //     //     sleep(1);
+            //     // }
+            // }
+            
         } else {
         /**
          * Parent Process
          */
-            waitpid(childpid, &status, 0);
-            printf("PARENT: Child's exit code is %d\n",WEXITSTATUS(status));
+            // Child is NOT a background process, parent will be blocked
+            // and wait until child exits or terminated by a signal
+            if(!isBackground) {
+                do {
+                    waitpid(childpid, &status, WUNTRACED);
+                } while(!WIFEXITED(status) && !WIFSIGNALED(status));
+
+            // Child is A background process, parent continues
+            // Use a signal handler to check and reap child
+            } 
+            // else {
+            //     waitpid(-1, &status, WNOHANG);
+            // }
         }
         
     } else {
-        perror("fork");
+        perror("fork failed.");
         exit(-1);
     }
 
@@ -137,7 +208,10 @@ int main(int argc, char *argv[]) {
 
     char *line = NULL;
     char **args = NULL;
+    // char **params = NULL;
     int count;    
+    int run = 1;
+    int isBackground;
 
     /* Initiate prompt */
     printf("> ");
@@ -145,12 +219,13 @@ int main(int argc, char *argv[]) {
     strtok(line, "\n"); /* Remove trailing \n */
 
 
-    while (strncmp(line,"exit",4) != 0) {
+    while(run) {
 
         /* Parse arguments */
         count = getArgsCount(line);
-        args = getArgs(line, count);
-        forkProcess(args, count);
+        args = getArgs(line, count, &isBackground);
+
+        forkProcess(args, isBackground);
 
         /* Free previous data */
         free(args);
@@ -161,13 +236,15 @@ int main(int argc, char *argv[]) {
         line = getLine();
         strtok(line, "\n");
 
+        /* Continue? */
+        run = runShell(line);
     }
 
     printf("myShell terminating...\n \n");
     printf("[Process completed]\n");
     
         
-    if(strncmp(line,"exit",4) == 0) {
+    if(!run) {
         free(line);
     }
     
