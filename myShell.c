@@ -120,7 +120,7 @@ void killZombies(int signo) {
     int status;
 
     while((childpid = waitpid(-1, &status, WNOHANG)) > 0) {
-        printf("child %d terminates\n", childpid);
+        printf("[%d] Reaped\n", childpid);
     }
 }
 
@@ -143,6 +143,7 @@ void forkProcess(char **args, int isBackground) {
         perror("sigaction() failed");
         exit(1);
     }
+    sigaction(SIGCHLD, &sigact, NULL);
 
     /**
      * Create a new process
@@ -152,30 +153,17 @@ void forkProcess(char **args, int isBackground) {
     /**
      * Code for parent and child process
      */
-    if(childpid >= 0) { /* fork succeeded*/
+    if(childpid >= 0) { // fork succeeded
 
         /**
          * Child Process
          */
         if(childpid == 0) {
+            if(isBackground) {
+                printf("[%d] Started\n", getpid());
+            }
             status = execvp(args[0], args);
-            // printf("CHILD: My pid is: %d\n", getpid());
             exit(status);
-            // if(!isBackground) {
-            //     status = execvp(args[0], args);
-            //     // printf("CHILD: My pid is: %d\n", getpid());
-            //     exit(status);
-            // } else {
-            //     setpgid(0,0);
-            //     status = execvp(args[0], args);
-            //     // printf("CHILD: My pid is: %d\n", getpid());
-            //     exit(status);
-
-            //     // for(int i = 0; i < 10; i++) {
-            //     //     printf("CHILD i: %d\n",i);
-            //     //     sleep(1);
-            //     // }
-            // }
             
         } else {
         /**
@@ -184,16 +172,17 @@ void forkProcess(char **args, int isBackground) {
             // Child is NOT a background process, parent will be blocked
             // and wait until child exits or terminated by a signal
             if(!isBackground) {
+                // isBackground = 0;
                 do {
                     waitpid(childpid, &status, WUNTRACED);
                 } while(!WIFEXITED(status) && !WIFSIGNALED(status));
 
             // Child is A background process, parent continues
             // Use a signal handler to check and reap child
-            } 
-            // else {
-            //     waitpid(-1, &status, WNOHANG);
-            // }
+            } else {
+                sigact.sa_handler = SIG_DFL;
+                sigaction(SIGCHLD, &sigact, NULL);
+            }
         }
         
     } else {
