@@ -1,6 +1,6 @@
 OBJ = myShell.o 
 CC = gcc
-CFLAGS = -std=c99 -Wall -pedantic
+CFLAGS = -std=gnu99 -Wall -pedantic
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $ $@ $<
