@@ -173,6 +173,7 @@ void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, ch
             printf("[%d] Started\n", getpid());
         }
 
+        // I/O Redirect
         // Source: http://digi-cron.com:8080/programmations/c/lectures/8-dup.html
         int in, out;
 
