@@ -92,15 +92,15 @@ char **getArgs(char *line, int count, int *isBackground, int *reOutFile, char *o
     while(token != NULL) {
         if(strncmp(token,"&",1) == 0) { // Asserts background process
             *isBackground = 1;
-        } else if(strncmp(token,">",1) == 0) {
+        } else if(strncmp(token,">",1) == 0) { // Has redirect to output file
             *reOutFile = 1;
             strcpy(temp,">");
-        } else if(strncmp(token,"<",1) == 0) {
+        } else if(strncmp(token,"<",1) == 0) { // Has redirect from input file
             *reInFile = 1;
             strcpy(temp,"<");
-        } else if(*reOutFile == 1 && strncmp(temp,">",1) == 0) { 
+        } else if(*reOutFile == 1 && strncmp(temp,">",1) == 0) { // Get output file name
             strcpy(outFile,token);
-        } else if(*reInFile == 1 && strncmp(temp,"<",1) == 0) { 
+        } else if(*reInFile == 1 && strncmp(temp,"<",1) == 0) { // Get input file name
             strcpy(inFile,token);
         } else {
             args[index] = token;
@@ -171,40 +171,26 @@ void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, ch
         if(isBackground) {
             printf("[%d] Started\n", getpid());
         }
-        if(reOutFile) {
-            FILE *fp;
-            fp = freopen(outFile, "w", stdout);
-            status = execvp(args[0], args);
-            fclose(fp);
-            exit(status);
-        } else if(reInFile) {
-            FILE *fp;
-            fp = freopen(inFile, "r", stdin);
-            status = execvp(args[0], args);
-            fclose(fp);
-            exit(status);
-        } else if(reOutFile && reInFile) {
-            int in, out;
-            in = open(outFile, O_RDONLY);
-            out = open(inFile, O_WRONLY | O_CREAT);
-            dup2(in, 0);
-            dup2(out, 1);
-            close(in);
-            close(out);
 
-            // FILE *fp, *stream;
-            // stream = fopen(outFile, "r");
-            // fp = freopen(inFile, "w+", stream);
-            status = execvp(args[0], args);
-            // fclose(fp);
-            // fclose(stream);
-            exit(status);
-        } else if(!reOutFile && !reInFile) {
-            status = execvp(args[0], args);
-            exit(status);
+        int out, in;
+
+        if(reOutFile) { // > output.txt
+            out = open(outFile, O_WRONLY | O_TRUNC | O_CREAT);
+            dup2(out,1); // redirect STDOUT
+            close(out);
         }
+        if(reInFile) { // < input.txt
+            in = open(outFile, O_RDONLY);
+            dup2(in,0); // redirect STDIN
+            close(out);
+        }
+
+        status = execvp(args[0], args);
+        perror("execvp");
+        exit(status);
+
     } else if(childpid < 0) {
-        perror("fork failed.");
+        perror("fork");
         exit(-1);
     }
 
