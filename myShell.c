@@ -92,15 +92,15 @@ char **getArgs(char *line, int count, int *isBackground, int *reOutFile, char *o
     while(token != NULL) {
         if(strncmp(token,"&",1) == 0) { // Asserts background process
             *isBackground = 1;
-        } else if(strncmp(token,">",1) == 0) { // Has redirect to output file
+        } else if(strncmp(token,">",1) == 0) {
             *reOutFile = 1;
             strcpy(temp,">");
-        } else if(strncmp(token,"<",1) == 0) { // Has redirect from input file
+        } else if(strncmp(token,"<",1) == 0) {
             *reInFile = 1;
             strcpy(temp,"<");
-        } else if(*reOutFile == 1 && strncmp(temp,">",1) == 0) { // Get output file name
+        } else if(*reOutFile == 1 && strncmp(temp,">",1) == 0) { 
             strcpy(outFile,token);
-        } else if(*reInFile == 1 && strncmp(temp,"<",1) == 0) { // Get input file name
+        } else if(*reInFile == 1 && strncmp(temp,"<",1) == 0) { 
             strcpy(inFile,token);
         } else {
             args[index] = token;
@@ -173,21 +173,36 @@ void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, ch
             printf("[%d] Started\n", getpid());
         }
 
-        int out, in;
+        // Source: http://digi-cron.com:8080/programmations/c/lectures/8-dup.html
+        int in, out;
 
-        if(reOutFile) { // > output.txt
-            out = open(outFile, O_WRONLY | O_TRUNC | O_CREAT);
-            dup2(out,1); // redirect STDOUT
-            close(out);
+        // Redirect stdin
+        if(reInFile) {
+            if((in = open(inFile, O_RDONLY)) == -1) {
+                perror("open inFile");
+                exit(3);
+            }
         }
-        if(reInFile) { // < input.txt
-            in = open(outFile, O_RDONLY);
-            dup2(in,0); // redirect STDIN
-            close(out);
+        close(fileno(stdin));
+        dup(in);
+
+        // Redirect stdout
+        if(reOutFile) {
+            if((out = open(outFile, O_WRONLY | O_CREAT | O_TRUNC, 0600)) == -1) { // 0600 = owner has read permission
+                perror("open outFile");
+                exit(3);
+            }
         }
+        dup2(out, fileno(stdout));
+
+        // if(reOutFile) {
+        //     freopen(outFile, "w", stdout);
+        // }
+        // if(reInFile) {
+        //     freopen(inFile, "r", stdin);
+        // }
 
         status = execvp(args[0], args);
-        perror("execvp");
         exit(status);
 
     } else if(childpid < 0) {
