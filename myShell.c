@@ -6,8 +6,10 @@
 #include <errno.h>       /* Errors */
 #include <string.h>     /* Strings */
 #include <signal.h>     /* Signals */
+#include <fcntl.h>
 
 #define LINE_LN 256
+#define FILE_LN 50
 
 /**
  * Program: myShell
@@ -68,12 +70,15 @@ int getArgsCount(char *line) {
 /** 
  * Return 2D array of args
  */
-char **getArgs(char *line, int count, int *isBackground) {
+char **getArgs(char *line, int count, int *isBackground, int *reOutFile, char *outFile, int *reInFile, char *inFile) {
     const char s[10] = " \t\r\n\a";
     char *token;
     char **args = malloc(sizeof(char*) * (count+1));
+    char temp[2];
     int index = 0;
     *isBackground = 0; // Default foreground process
+    *reOutFile = 0; // No redirecting to output file
+    *reInFile = 0; // No redirecting from input file
 
     if(!args) {
         fprintf(stderr, "Error: malloc error in getArgs\n");
@@ -87,6 +92,16 @@ char **getArgs(char *line, int count, int *isBackground) {
     while(token != NULL) {
         if(strncmp(token,"&",1) == 0) { // Asserts background process
             *isBackground = 1;
+        } else if(strncmp(token,">",1) == 0) {
+            *reOutFile = 1;
+            strcpy(temp,">");
+        } else if(strncmp(token,"<",1) == 0) {
+            *reInFile = 1;
+            strcpy(temp,"<");
+        } else if(*reOutFile == 1 && strncmp(temp,">",1) == 0) { 
+            strcpy(outFile,token);
+        } else if(*reInFile == 1 && strncmp(temp,"<",1) == 0) { 
+            strcpy(inFile,token);
         } else {
             args[index] = token;
             index++;
@@ -104,7 +119,6 @@ char **getArgs(char *line, int count, int *isBackground) {
 char *getLine(void) {
     char *line = NULL;
     size_t length = LINE_LN;
-    // ssize_t nread;
 
     line = (char *)malloc(LINE_LN);
     getline(&line, &length, stdin);
@@ -127,7 +141,7 @@ void killZombies(int signo) {
 /**
  * Forking process
  */
-void forkProcess(char **args, int isBackground) {
+void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, char reInFile, char *inFile) {
     pid_t childpid;
     int status;
 
@@ -151,45 +165,66 @@ void forkProcess(char **args, int isBackground) {
     childpid = fork();
     
     /**
-     * Code for parent and child process
+     * Child Process
      */
-    if(childpid >= 0) { // fork succeeded
+    if(childpid == 0) {
+        if(isBackground) {
+            printf("[%d] Started\n", getpid());
+        }
+        if(reOutFile) {
+            FILE *fp;
+            fp = freopen(outFile, "w", stdout);
+            status = execvp(args[0], args);
+            fclose(fp);
+            exit(status);
+        } else if(reInFile) {
+            FILE *fp;
+            fp = freopen(inFile, "r", stdin);
+            status = execvp(args[0], args);
+            fclose(fp);
+            exit(status);
+        } else if(reOutFile && reInFile) {
+            int in, out;
+            in = open(outFile, O_RDONLY);
+            out = open(inFile, O_WRONLY | O_CREAT);
+            dup2(in, 0);
+            dup2(out, 1);
+            close(in);
+            close(out);
 
-        /**
-         * Child Process
-         */
-        if(childpid == 0) {
-            if(isBackground) {
-                printf("[%d] Started\n", getpid());
-            }
+            // FILE *fp, *stream;
+            // stream = fopen(outFile, "r");
+            // fp = freopen(inFile, "w+", stream);
+            status = execvp(args[0], args);
+            // fclose(fp);
+            // fclose(stream);
+            exit(status);
+        } else if(!reOutFile && !reInFile) {
             status = execvp(args[0], args);
             exit(status);
-            
-        } else {
-        /**
-         * Parent Process
-         */
-            // Child is NOT a background process, parent will be blocked
-            // and wait until child exits or terminated by a signal
-            if(!isBackground) {
-                // isBackground = 0;
-                do {
-                    waitpid(childpid, &status, WUNTRACED);
-                } while(!WIFEXITED(status) && !WIFSIGNALED(status));
-
-            // Child is A background process, parent continues
-            // Use a signal handler to check and reap child
-            } else {
-                sigact.sa_handler = SIG_DFL;
-                sigaction(SIGCHLD, &sigact, NULL);
-            }
         }
-        
-    } else {
+    } else if(childpid < 0) {
         perror("fork failed.");
         exit(-1);
     }
 
+    /**
+     * Parent Process
+     */
+    // Child is NOT a background process, parent will be blocked
+    // and wait until child exits or terminated by a signal
+    if(!isBackground) {
+        // isBackground = 0;
+        do {
+            waitpid(childpid, &status, WUNTRACED);
+        } while(!WIFEXITED(status) && !WIFSIGNALED(status));
+
+    // Child is A background process, parent continues
+    // Use a signal handler to check and reap child
+    } else {
+        sigact.sa_handler = SIG_DFL;
+        sigaction(SIGCHLD, &sigact, NULL);
+    }
 }
 
 
@@ -197,10 +232,13 @@ int main(int argc, char *argv[]) {
 
     char *line = NULL;
     char **args = NULL;
-    // char **params = NULL;
+    char outFile[FILE_LN];
+    char inFile[FILE_LN];
     int count;    
     int run = 1;
     int isBackground;
+    int reOutFile;
+    int reInFile;
 
     /* Initiate prompt */
     printf("> ");
@@ -212,9 +250,18 @@ int main(int argc, char *argv[]) {
 
         /* Parse arguments */
         count = getArgsCount(line);
-        args = getArgs(line, count, &isBackground);
+        args = getArgs(line, count, &isBackground, &reOutFile, outFile, &reInFile, inFile);
 
-        forkProcess(args, isBackground);
+// if(reOutFile == 1) {
+// printf("reOutFile: %d\n", reOutFile);
+// printf("outFile: %s\n", outFile);
+// }
+// if(reInFile == 1) {
+// printf("reInFile: %d\n", reInFile);
+// printf("inFile: %s\n", inFile);
+// }
+
+        forkProcess(args, isBackground, reOutFile, outFile, reInFile, inFile);
 
         /* Free previous data */
         free(args);
