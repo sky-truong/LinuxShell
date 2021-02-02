@@ -14,7 +14,7 @@
 /**
  * Program: myShell
  * Author: Pham Sky Truong
- * Date of Last Revision: Jan 29th, 2021
+ * Date of Last Revision: Feb 2nd, 2021
  * Summary: A Linux C Shell 
  * References: Example files from CIS*3110
  */
@@ -46,10 +46,13 @@ int runShell(char *input) {
 /**
  * Count number of args in the command 
  */
-int getArgsCount(char *line) {
+void getArgsInfo(char *line, int *argsCount, int *hasPipe, int *argsPipeCount) {
     const char s[2] = " ";
     char *token;
-    int count = 0;
+    int temp = 0;
+    (*argsCount) = 0;
+    (*hasPipe) = 0;
+    (*argsPipeCount) = 0;
     char ptr[strlen(line)+1];
     strcpy(ptr, line);
 
@@ -61,10 +64,17 @@ int getArgsCount(char *line) {
 
     /* walk through other tokens */
     while(token != NULL) {
-        count++;
+        if(strncmp(token,"|",1) == 0) {
+            *hasPipe = 1;
+            temp = (*argsCount);
+        }
+        (*argsCount)++;
         token = strtok(NULL, s);
     }
-    return count;
+    if(*hasPipe) {
+        *argsPipeCount = (*argsCount) - temp - 1;
+        *argsCount = (*argsCount) - (*argsPipeCount)-1;
+    }
 }
 
 /** 
@@ -130,19 +140,19 @@ char *getLine(void) {
  * Signal handler to reap child processes
  */
 void killZombies(int signo) {
-    pid_t childpid;
+    pid_t childPid;
     int status;
 
-    while((childpid = waitpid(-1, &status, WNOHANG)) > 0) {
-        printf("[%d] Reaped\n", childpid);
+    while((childPid = waitpid(-1, &status, WNOHANG)) > 0) {
+        printf("[%d] Reaped\n", childPid);
     }
 }
 
 /**
- * Forking process
+ * Fork and execute command, no pipe
  */
-void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, char reInFile, char *inFile) {
-    pid_t childpid;
+void execArgs(char **args, int isBackground, int reOutFile, char *outFile, char reInFile, char *inFile) {
+    pid_t childPid;
     int status;
 
     /**
@@ -162,52 +172,31 @@ void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, ch
     /**
      * Create a new process
      */
-    childpid = fork();
-    
+    if((childPid = fork()) < 0) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
     /**
      * Child Process
      */
-    if(childpid == 0) {
+    if(!childPid) { // childPid == 0
         if(isBackground) {
             printf("[%d] Started\n", getpid());
         }
 
-        // Source: http://digi-cron.com:8080/programmations/c/lectures/8-dup.html
-        int in, out;
-
-        // Redirect stdin
-        if(reInFile) {
-            if((in = open(inFile, O_RDONLY)) == -1) {
-                perror("open inFile");
-                exit(3);
-            }
-        }
-        close(fileno(stdin));
-        dup(in);
-
-        // Redirect stdout
+        // Redirect I/O files
         if(reOutFile) {
-            if((out = open(outFile, O_WRONLY | O_CREAT | O_TRUNC, 0600)) == -1) { // 0600 = owner has read permission
-                perror("open outFile");
-                exit(3);
-            }
+            freopen(outFile, "w", stdout);
         }
-        dup2(out, fileno(stdout));
-
-        // if(reOutFile) {
-        //     freopen(outFile, "w", stdout);
-        // }
-        // if(reInFile) {
-        //     freopen(inFile, "r", stdin);
-        // }
+        if(reInFile) {
+            freopen(inFile, "r", stdin);
+        }
 
         if(execvp(args[0], args) == -1) {
             perror(args[0]);
+            exit(EXIT_FAILURE);
         }
-        exit(EXIT_FAILURE);
-    } else if(childpid < 0) {
-        perror("fork");
-        exit(-1);
     }
 
     /**
@@ -216,17 +205,123 @@ void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, ch
     // Child is NOT a background process, parent will be blocked
     // and wait until child exits or terminated by a signal
     if(!isBackground) {
-        // isBackground = 0;
         do {
-            waitpid(childpid, &status, WUNTRACED);
+            waitpid(childPid, &status, WUNTRACED);
         } while(!WIFEXITED(status) && !WIFSIGNALED(status));
+    }
 
-    
-    } 
     // Child is A background process, parent continues
     // Use a signal handler to check and reap child
+
+    // pid_t somekidpid;
+    // if((somekidpid = waitpid(-1, &status, WNOHANG)) > 0) {
+    //     printf("[%d] Reaped\n", somekidpid);
+    // }
+
     sigact.sa_handler = SIG_DFL;
     sigaction(SIGCHLD, &sigact, NULL);
+}
+
+/**
+ * Fork and execute command with pipe
+ */
+void execArgsPipe(char **args, char **argsPipe, int reOutFile, char *outFile, char reInFile, char *inFile, int reOutFilePipe, char *outFilePipe, int reInFilePipe, char *inFilePipe) {
+    pid_t childPid[2];
+    int status;
+    int pipeFd[2];
+
+    /**
+     * Create pipe
+     */
+    if(pipe(pipeFd) < 0) {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    /**
+     * Create the first process
+     */
+     if((childPid[0] = fork()) < 0) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    /**
+     * Child Process
+     */
+    if(!childPid[0]) {
+
+        // Redirect I/O files
+        if(reOutFile) {
+            freopen(outFile, "w", stdout);
+        }
+        if(reInFile) {
+            freopen(inFile, "r", stdin);
+        }
+
+        // Child closes the write end of the pipe
+        // then set stdout to pipe
+        close(pipeFd[0]);
+        dup2(pipeFd[1], fileno(stdout));
+        close(pipeFd[1]);
+
+        if(execvp(args[0], args) == -1) {
+            perror(args[0]);
+            exit(EXIT_FAILURE);
+        }
+        
+    }
+
+    /**
+     * Parent Process
+     */
+    if(childPid[0]) {
+        /*
+         * Create the next process
+         */
+        if((childPid[1] = fork()) < 0) {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        }
+
+        /* Child process */
+        if(!childPid[1]) { 
+
+            // Redirect I/O files
+            if(reOutFilePipe) {
+                freopen(outFilePipe, "w", stdout);
+            }
+            if(reInFilePipe) {
+                freopen(inFilePipe, "r", stdin);
+            }
+
+            // Parent closes the read end of the pipe
+            // then set stdin to pipe
+            close(pipeFd[1]);
+            dup2(pipeFd[0],fileno(stdin));
+            close(pipeFd[0]);
+
+            if(execvp(argsPipe[0], argsPipe) == -1) {
+                perror(argsPipe[0]);
+                exit(EXIT_FAILURE);
+            }
+        }
+        
+        /* Parent process */
+        close(pipeFd[0]);
+        close(pipeFd[1]);
+        do {
+            waitpid(childPid[1], &status, WUNTRACED);
+        } while(!WIFEXITED(status) && !WIFSIGNALED(status));
+    }
+    
+    // pid_t somekidpid;
+    // if((somekidpid = waitpid(-1, &status, WNOHANG)) > 0) {
+    //     printf("[%d] Reaped\n", somekidpid);
+    // }
+
+    // sigact.sa_handler = SIG_DFL;
+    // sigaction(SIGCHLD, &sigact, NULL);
 }
 
 
@@ -234,13 +329,14 @@ int main(int argc, char *argv[]) {
 
     char *line = NULL;
     char **args = NULL;
-    char outFile[FILE_LN];
-    char inFile[FILE_LN];
-    int count;    
+    char outFile[FILE_LN], inFile[FILE_LN];
     int run = 1;
-    int isBackground;
-    int reOutFile;
-    int reInFile;
+    int argsCount, isBackground, reOutFile, reInFile;
+
+    char **argsPipe = NULL;
+    int hasPipe;
+    char outFilePipe[FILE_LN], inFilePipe[FILE_LN];
+    int argsPipeCount, isBackgroundPipe, reOutFilePipe, reInFilePipe;
 
     /* Initiate prompt */
     printf("> ");
@@ -251,23 +347,31 @@ int main(int argc, char *argv[]) {
     while(run) {
 
         /* Parse arguments */
-        count = getArgsCount(line);
-        args = getArgs(line, count, &isBackground, &reOutFile, outFile, &reInFile, inFile);
+        getArgsInfo(line, &argsCount, &hasPipe, &argsPipeCount);
 
-// if(reOutFile == 1) {
-// printf("reOutFile: %d\n", reOutFile);
-// printf("outFile: %s\n", outFile);
-// }
-// if(reInFile == 1) {
-// printf("reInFile: %d\n", reInFile);
-// printf("inFile: %s\n", inFile);
-// }
+        /* If there's pipe, break into 2 strings to be parsed */
+        char *firstCmd = line, *secondCmd = line;
+        firstCmd = strsep(&secondCmd,"|");
 
-        forkProcess(args, isBackground, reOutFile, outFile, reInFile, inFile);
+        args = getArgs(firstCmd, argsCount, &isBackground, &reOutFile, outFile, &reInFile, inFile);
+
+        if(hasPipe) {
+            argsPipe = getArgs(secondCmd, argsPipeCount, &isBackgroundPipe, &reOutFilePipe, outFilePipe, &reInFilePipe, inFilePipe);
+        }
+
+        /* Fork and exec */
+        if(!hasPipe) {
+            execArgs(args, isBackground, reOutFile, outFile, reInFile, inFile);
+        } else {
+            execArgsPipe(args, argsPipe, reOutFile, outFile, reInFile, inFile, reOutFilePipe, outFilePipe, reInFilePipe, inFilePipe);
+        }
 
         /* Free previous data */
         free(args);
         free(line);
+        if(hasPipe) {
+            free(argsPipe);
+        }
 
         /* Re-prompt */
         printf("> ");
