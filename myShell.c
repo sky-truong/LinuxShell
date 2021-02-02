@@ -154,7 +154,7 @@ void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, ch
 
     sigact.sa_handler = killZombies;
     if(sigaction(SIGCHLD, &sigact, NULL) < 0) {
-        perror("sigaction() failed");
+        perror("sigaction()");
         exit(1);
     }
     sigaction(SIGCHLD, &sigact, NULL);
@@ -201,9 +201,10 @@ void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, ch
         //     freopen(inFile, "r", stdin);
         // }
 
-        status = execvp(args[0], args);
-        exit(status);
-
+        if(execvp(args[0], args) == -1) {
+            perror(args[0]);
+        }
+        exit(EXIT_FAILURE);
     } else if(childpid < 0) {
         perror("fork");
         exit(-1);
@@ -220,12 +221,12 @@ void forkProcess(char **args, int isBackground, int reOutFile, char *outFile, ch
             waitpid(childpid, &status, WUNTRACED);
         } while(!WIFEXITED(status) && !WIFSIGNALED(status));
 
+    
+    } 
     // Child is A background process, parent continues
     // Use a signal handler to check and reap child
-    } else {
-        sigact.sa_handler = SIG_DFL;
-        sigaction(SIGCHLD, &sigact, NULL);
-    }
+    sigact.sa_handler = SIG_DFL;
+    sigaction(SIGCHLD, &sigact, NULL);
 }
 
 
