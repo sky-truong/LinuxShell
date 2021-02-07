@@ -10,11 +10,13 @@
 
 #define LINE_LN 256
 #define FILE_LN 50
+#define PROFILE_FILE ".CIS3110_profile"
+#define HISTORY_FILE ".CIS3110_history"
 
 /**
  * Program: myShell
  * Author: Pham Sky Truong
- * Date of Last Revision: Feb 2nd, 2021
+ * Date of Last Revision: Feb 7th, 2021
  * Summary: A Linux C Shell 
  * References: Example files from CIS*3110
  */
@@ -24,6 +26,7 @@
  * Error check for args array 
  */
 void printArgs(char **args, int count) {
+    
     if(*args != NULL) {
         for(int i = 0; i < count+1; i++) {
             printf("args[%d]: %s\n", i, args[i]);
@@ -35,6 +38,7 @@ void printArgs(char **args, int count) {
  * Check if user wants to exit shell
  */
 int runShell(char *input) {
+    
     if(strncmp(input,"exit",4) == 0 || 
         strncmp(input,"quit",4) == 0 || 
         strncmp(input,"q",1) == 0) {
@@ -81,6 +85,7 @@ void getArgsInfo(char *line, int *argsCount, int *hasPipe, int *argsPipeCount) {
  * Return 2D array of args
  */
 char **getArgs(char *line, int count, int *isBackground, int *reOutFile, char *outFile, int *reInFile, char *inFile) {
+    
     const char s[10] = " \t\r\n\a";
     char *token;
     char **args = malloc(sizeof(char*) * (count+1));
@@ -127,6 +132,7 @@ char **getArgs(char *line, int count, int *isBackground, int *reOutFile, char *o
  * Return user command line
  */
 char *getLine(void) {
+    
     char *line = NULL;
     size_t length = LINE_LN;
 
@@ -141,6 +147,7 @@ char *getLine(void) {
  * References: https://fedemengo.github.io/blog/2018/02/SIGCHLD-handler.html
  */
 void killZombies(int signo) {
+    
     pid_t childPid;
     int status;
 
@@ -153,6 +160,7 @@ void killZombies(int signo) {
  * Fork and execute command, no pipe
  */
 void execArgs(char **args, int isBackground, int reOutFile, char *outFile, char reInFile, char *inFile) {
+    
     pid_t childPid;
     int status;
 
@@ -198,6 +206,7 @@ void execArgs(char **args, int isBackground, int reOutFile, char *outFile, char 
             perror(args[0]);
             exit(EXIT_FAILURE);
         }
+        // execvpe(args[0], args, "/bin");
     }
 
     /**
@@ -227,6 +236,7 @@ void execArgs(char **args, int isBackground, int reOutFile, char *outFile, char 
  * Fork and execute command with pipe
  */
 void execArgsPipe(char **args, char **argsPipe, int reOutFile, char *outFile, char reInFile, char *inFile, int reOutFilePipe, char *outFilePipe, int reInFilePipe, char *inFilePipe) {
+    
     pid_t childPid[2];
     int status;
     int pipeFd[2];
@@ -325,10 +335,247 @@ void execArgsPipe(char **args, char **argsPipe, int reOutFile, char *outFile, ch
     // sigaction(SIGCHLD, &sigact, NULL);
 }
 
-
-int main(int argc, char *argv[]) {
+/**
+ * Get $PATH
+ */
+void getPathHome(char *PATH, char *HOME) {
 
     char *line = NULL;
+    size_t len = 0;
+    ssize_t size;
+
+    FILE *fpProfile = fopen(PROFILE_FILE, "r");
+
+    size = getline(&line, &len, fpProfile);
+
+    while(size >= 0) {
+        size = getline(&line, &len, fpProfile);
+    }
+    free(line);
+    fclose(fpProfile);
+}
+
+/**
+ * Create history command list
+ */
+char **createHistoryCmdList(int capacity) {
+
+    char **cmdHistory = malloc(sizeof(char*) * capacity); // initiate to store 50 commands
+    if(!cmdHistory) {
+        fprintf(stderr,"Error: Out of buffer\n");
+        return NULL;
+    }
+
+    return cmdHistory;
+}
+
+/**
+ * Return number of commands in history file
+ */
+int numCmds(void) {
+    FILE *fpHistory = fopen(HISTORY_FILE, "r");
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t size;
+    int num = 0;
+
+    size = getline(&line, &len, fpHistory);
+
+    while(size >= 0) {
+        num++;
+        size = getline(&line, &len, fpHistory);
+    }
+    free(line);
+    fclose(fpHistory);
+
+    return num;
+}
+
+/**
+ * Add command to command history file
+ */
+void addToCmdHistoryFile(char *line) {
+
+    FILE *fpHistory;
+
+    if(access(HISTORY_FILE, R_OK) == 0) {
+        fpHistory = fopen(HISTORY_FILE, "a+");
+    } else {
+        fpHistory = fopen(HISTORY_FILE, "w+");
+    }
+
+    char temp[LINE_LN];
+    strcpy(temp,line);
+    fprintf(fpHistory, "%s\n", temp);
+
+    fclose(fpHistory);
+}
+
+// void addToCmdHistory(char *line, char **cmdHistory, int cmdCount) {
+//     cmdHistory[cmdCount-1] = malloc(sizeof(char) * LINE_LN);
+//     strcpy(cmdHistory[cmdCount-1],line);
+// }
+
+/**
+ * Delete command history
+ */
+void delCmdHistory(char **cmdHistory, int *cmdCount) {
+    for(int i = 0; i < (*cmdCount); i++) {
+        free(cmdHistory[i]);
+    }
+    *cmdCount = 0;
+}
+
+/**
+ * Check if user input is a built-in command
+ */
+int isBuiltInCmd(char *line) {
+
+    char temp[LINE_LN];
+    strcpy(temp,line);
+    if(strncmp(temp,"export",6) == 0 || 
+        strncmp(temp,"history",7) == 0 || 
+        strncmp(temp,"cd",2) == 0 ||
+        strncmp(temp,"echo",4) == 0) {
+
+        return 1;
+    } 
+    return 0;
+}
+
+/**
+ * Run built-in commands
+ */
+void runBuiltInCmd(char *cmdLine) {
+    
+    char temp[LINE_LN];
+    strcpy(temp,cmdLine);
+    if(strncmp(temp,"export",6) == 0) {
+
+    } else if(strncmp(temp,"history",7) == 0) {
+
+        if(strcmp(temp,"history") == 0) {
+            FILE *fpHistory = fopen(HISTORY_FILE, "r");
+            char *line = NULL;
+            size_t len = 0;
+            ssize_t size;
+            int i = 1;
+
+            size = getline(&line, &len, fpHistory);
+
+            while(size >= 0) {
+                printf("%d %s", i, line);
+                i++;
+                size = getline(&line, &len, fpHistory);
+            }
+            free(line);
+            fclose(fpHistory);
+
+        } else if(strcmp(temp,"history -c") == 0) {
+
+            FILE *fpHistory = fopen(HISTORY_FILE, "w");
+            printf("History file deleted.\n");
+            fclose(fpHistory);
+
+        } else { // assume history n
+
+            // Parse to get n
+            char tempHist[LINE_LN];
+            strcpy(tempHist,cmdLine);
+
+            char *token = strtok(tempHist," ");
+            token = strtok(NULL," ");
+
+            int n = atoi(token); // the last n commands to be printed
+            int cmdCount = numCmds();
+
+            // Go through history file to print requested lines
+            FILE *fpHistory = fopen(HISTORY_FILE, "r");
+            char *line = NULL;
+            size_t len = 0;
+            ssize_t size;
+            int i = 1;
+
+            size = getline(&line, &len, fpHistory);
+
+            while(size >= 0) {
+                if(n >= cmdCount) {
+                    printf("%d %s", i, line);
+                }
+                cmdCount--;
+                i++;
+                size = getline(&line, &len, fpHistory);
+            }
+            free(line);
+            fclose(fpHistory);
+
+        }
+    } else if(strncmp(temp,"cd",2) == 0) {
+
+    } else if(strncmp(temp,"echo",4) == 0) {
+
+        char tempEnv[LINE_LN];
+        strcpy(tempEnv,cmdLine);
+
+        char *token = strtok(tempEnv," ");
+        token = strtok(NULL," "); // Constrain to $PATH, $HOME, $HISTFILE
+
+        if(strcmp(token,"$PATH") == 0) {
+            printf("%s\n", getenv("PATH"));
+        } else if(strcmp(token,"$HOME") == 0) {
+            printf("%s\n", getenv("HOME"));
+        } else if(strcmp(token,"$HISTFILE") == 0) {
+            printf("%s\n", getenv("HISTFILE"));
+        }
+    }
+}
+
+
+/**
+ * Main program
+ */
+int main(int argc, char *argv[]) {
+
+    /**
+     * Setting up environment variables
+     */
+
+    char PATH[LINE_LN];
+    char HOME[LINE_LN];
+
+    FILE *fpProfile;
+    FILE *fpHistory;
+
+    // HOME = cwd
+    // if(getcwd(HOME, sizeof(HOME)) == NULL) {
+    //     perror("getcwd()");
+    // }
+
+    // /* Handle .CIS3110_profile */
+    // if(access(PROFILE_FILE, R_OK) == 0) {
+    //     getPath(PATH, HOME);
+    // }
+    // printf("HOME: %s\n", getenv("HOME"));
+    // setenv("PATH","/bin",1);
+
+    /* Set env $HISTFILE to .CIS3110_history */
+    if(access(HISTORY_FILE, R_OK) == 0) {
+        // fpHistory = fopen(HISTORY_FILE, "a+");
+        setenv("HISTFILE", HISTORY_FILE, 1);
+    } else {
+        fpHistory = fopen(HISTORY_FILE, "w+");
+        setenv("HISTFILE", HISTORY_FILE, 1);
+    }
+
+
+    /**
+     * Shell run
+     */
+
+    char *line = NULL;
+    // char **cmdHistory = NULL;
+    // int capacity = 50;
+    // int cmdCount = 0;
     char **args = NULL;
     char outFile[FILE_LN], inFile[FILE_LN];
     int run = 1;
@@ -340,44 +587,60 @@ int main(int argc, char *argv[]) {
     int argsPipeCount, isBackgroundPipe, reOutFilePipe, reInFilePipe;
 
     /* Initiate prompt */
-    printf("> ");
-    line = getLine();
-    strtok(line, "\n"); /* Remove trailing \n */
+    char cwd[LINE_LN];
+    printf("%s> ", getcwd(cwd, sizeof(cwd)));
 
+    line = getLine();
+    strtok(line, "\n"); // Remove trailing \n
+
+    // cmdCount++;
+    addToCmdHistoryFile(line);
+
+    run = runShell(line); // exit/quit/q
 
     while(run) {
 
-        /* Parse arguments */
-        getArgsInfo(line, &argsCount, &hasPipe, &argsPipeCount);
+        if(isBuiltInCmd(line)) { // export, history, cd, echo
+            runBuiltInCmd(line);
 
-        /* If there's pipe, break into 2 strings to be parsed */
-        char *firstCmd = line, *secondCmd = line;
-        firstCmd = strsep(&secondCmd,"|");
+        } else { // other shell commands
 
-        args = getArgs(firstCmd, argsCount, &isBackground, &reOutFile, outFile, &reInFile, inFile);
+            /* Parse arguments */
+            getArgsInfo(line, &argsCount, &hasPipe, &argsPipeCount);
 
-        if(hasPipe) {
-            argsPipe = getArgs(secondCmd, argsPipeCount, &isBackgroundPipe, &reOutFilePipe, outFilePipe, &reInFilePipe, inFilePipe);
+            /* If there's pipe, break into 2 strings to be parsed */
+            char *firstCmd = line, *secondCmd = line;
+            firstCmd = strsep(&secondCmd,"|");
+
+            args = getArgs(firstCmd, argsCount, &isBackground, &reOutFile, outFile, &reInFile, inFile);
+
+            if(hasPipe) {
+                argsPipe = getArgs(secondCmd, argsPipeCount, &isBackgroundPipe, &reOutFilePipe, outFilePipe, &reInFilePipe, inFilePipe);
+            }
+
+            /* Fork and exec */
+            if(!hasPipe) {
+                execArgs(args, isBackground, reOutFile, outFile, reInFile, inFile);
+            } else {
+                execArgsPipe(args, argsPipe, reOutFile, outFile, reInFile, inFile, reOutFilePipe, outFilePipe, reInFilePipe, inFilePipe);
+            }
+
+            /* Free previous data */
+            free(args);
+            if(hasPipe) {
+                free(argsPipe);
+            }
         }
-
-        /* Fork and exec */
-        if(!hasPipe) {
-            execArgs(args, isBackground, reOutFile, outFile, reInFile, inFile);
-        } else {
-            execArgsPipe(args, argsPipe, reOutFile, outFile, reInFile, inFile, reOutFilePipe, outFilePipe, reInFilePipe, inFilePipe);
-        }
-
-        /* Free previous data */
-        free(args);
+      
         free(line);
-        if(hasPipe) {
-            free(argsPipe);
-        }
-
+        
         /* Re-prompt */
-        printf("> ");
+        printf("%s> ", getcwd(cwd, sizeof(cwd)));
         line = getLine();
         strtok(line, "\n");
+
+        // cmdCount++;
+        addToCmdHistoryFile(line);
 
         /* Continue? */
         run = runShell(line);
@@ -386,10 +649,14 @@ int main(int argc, char *argv[]) {
     printf("myShell terminating...\n \n");
     printf("[Process completed]\n");
     
-        
     if(!run) {
         free(line);
     }
-    
+
+    // for(int i = 0; i < cmdCount; i++) {
+    //     free(cmdHistory[i]);
+    // }
+    // free(cmdHistory);
+
     return EXIT_SUCCESS;
 }

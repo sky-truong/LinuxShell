@@ -55,3 +55,7 @@ dkms.conf
 
 # Misc
 .DS_Store
+bgSleep.c
+bgSleep
+.CIS3110_history
+interactive.c
