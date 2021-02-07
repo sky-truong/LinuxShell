@@ -8,7 +8,8 @@
 #include <signal.h>     /* Signals */
 #include <fcntl.h>
 
-#define LINE_LN 512
+#define LINE_LN 256
+#define PATH_LN 512
 #define FILE_LN 50
 #define PROFILE_FILE ".CIS3110_profile"
 #define HISTORY_FILE ".CIS3110_history"
@@ -453,72 +454,51 @@ void runBuiltInCmd(char *cmdLine) {
     strcpy(temp,cmdLine);
 
     if(strncmp(temp,"export",6) == 0) {
-        char substring[LINE_LN];
+
+        char substring[PATH_LN];
+
         if(strncmp(temp,"export PATH=",12) == 0) {
 
             memcpy(substring,&temp[12],strlen(temp)); // path with possible macros
             char tempEnv[5];
-            char path[LINE_LN];
+            char path[PATH_LN];
             int i, j, f, k = 0;
             int hasMacro = 0;
-printf("substring: >%s<\n", substring);
-printf("substring[0]: %c\n", substring[0]);
 
             for(i = 0; i < strlen(substring); i++) {
-                if(substring[i] != '$') { // grab other substrings
-printf("char %c\n", substring[i]);
 
+                if(substring[i] != '$') { // grab other chars
                     path[f] = substring[i];
                     f++;
                 } else { // $PATH, $HOME
-                    if(i != 0) { // '$' not at the start
-                        path[f] = '\0'; // close the first string
-                        f = 0; // reset to get new substring
-printf("???path: %s\n", path);
-
-                    }
-                    for(j = i+1; j < (i+5); j++) { // Constrained to PATH or HOME
+    
+                    for(j = i+1; j < (i+5); j++) {
                         tempEnv[k] = substring[j];
                         k++;
                     }
                     tempEnv[k] = '\0';
-
-printf("macro: %s\n", tempEnv);
-
-                   
+                    k = 0; // reset k for next envp macro
+                    hasMacro = 1;
+                    i += 4; // move index past the macro
 
                     // Replace macro with its full path
-                    char fullEnv[LINE_LN];
+                    char fullEnv[PATH_LN];
                     if(strcmp(tempEnv,"PATH") == 0) {
                         char *tempPATH = getenv("PATH");
-// printf("PATH: %s\n", temp);
-
                         strcpy(fullEnv,tempPATH);
                     } else if(strcmp(tempEnv,"HOME") == 0) {
                         char *tempHOME = getenv("HOME");
                         strcpy(fullEnv,tempHOME);
                     }
-printf("path: %s\n", path);
-printf("fullEnv: %s\n", fullEnv);
 
-                    if(i == 0) {
-                        strcpy(path,fullEnv);
-                    } else {
-                        strcat(path,fullEnv);
+                    // Loop through fullEnv to add to path
+                    for(int g = 0; g < strlen(fullEnv); g++) {
+                        path[f] = fullEnv[g];
+                        f++;
                     }
-
-                    k = 0; // reset k for next envp macro
-                    hasMacro = 1;
-                    i += 5; // move index past the macro
-// printf("path: %s\n", path);
-
                 }
             }
-            
-            // No macros found
-            if(hasMacro == 0) {
-                path[f] = '\0';
-            }
+            path[f] = '\0';
 
             setenv("PATH",path,1);
 
