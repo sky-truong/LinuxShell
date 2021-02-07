@@ -8,7 +8,7 @@
 #include <signal.h>     /* Signals */
 #include <fcntl.h>
 
-#define LINE_LN 256
+#define LINE_LN 512
 #define FILE_LN 50
 #define PROFILE_FILE ".CIS3110_profile"
 #define HISTORY_FILE ".CIS3110_history"
@@ -373,6 +373,7 @@ char **createHistoryCmdList(int capacity) {
  * Return number of commands in history file
  */
 int numCmds(void) {
+
     FILE *fpHistory = fopen(HISTORY_FILE, "r");
     char *line = NULL;
     size_t len = 0;
@@ -450,8 +451,84 @@ void runBuiltInCmd(char *cmdLine) {
     
     char temp[LINE_LN];
     strcpy(temp,cmdLine);
-    if(strncmp(temp,"export",6) == 0) {
 
+    if(strncmp(temp,"export",6) == 0) {
+        char substring[LINE_LN];
+        if(strncmp(temp,"export PATH=",12) == 0) {
+
+            memcpy(substring,&temp[12],strlen(temp)); // path with possible macros
+            char tempEnv[5];
+            char path[LINE_LN];
+            int i, j, f, k = 0;
+            int hasMacro = 0;
+printf("substring: >%s<\n", substring);
+printf("substring[0]: %c\n", substring[0]);
+
+            for(i = 0; i < strlen(substring); i++) {
+                if(substring[i] != '$') { // grab other substrings
+printf("char %c\n", substring[i]);
+
+                    path[f] = substring[i];
+                    f++;
+                } else { // $PATH, $HOME
+                    if(i != 0) { // '$' not at the start
+                        path[f] = '\0'; // close the first string
+                        f = 0; // reset to get new substring
+printf("???path: %s\n", path);
+
+                    }
+                    for(j = i+1; j < (i+5); j++) { // Constrained to PATH or HOME
+                        tempEnv[k] = substring[j];
+                        k++;
+                    }
+                    tempEnv[k] = '\0';
+
+printf("macro: %s\n", tempEnv);
+
+                   
+
+                    // Replace macro with its full path
+                    char fullEnv[LINE_LN];
+                    if(strcmp(tempEnv,"PATH") == 0) {
+                        char *tempPATH = getenv("PATH");
+// printf("PATH: %s\n", temp);
+
+                        strcpy(fullEnv,tempPATH);
+                    } else if(strcmp(tempEnv,"HOME") == 0) {
+                        char *tempHOME = getenv("HOME");
+                        strcpy(fullEnv,tempHOME);
+                    }
+printf("path: %s\n", path);
+printf("fullEnv: %s\n", fullEnv);
+
+                    if(i == 0) {
+                        strcpy(path,fullEnv);
+                    } else {
+                        strcat(path,fullEnv);
+                    }
+
+                    k = 0; // reset k for next envp macro
+                    hasMacro = 1;
+                    i += 5; // move index past the macro
+// printf("path: %s\n", path);
+
+                }
+            }
+            
+            // No macros found
+            if(hasMacro == 0) {
+                path[f] = '\0';
+            }
+
+            setenv("PATH",path,1);
+
+        } else if(strncmp(temp,"export HOME=",12) == 0) {
+            memcpy(substring,&temp[12],strlen(temp)); // assuming no macros in path for HOME
+            setenv("HOME",substring,1);
+        } else if(strncmp(temp,"export HISTFILE=",16) == 0) {
+            memcpy(substring,&temp[16],strlen(temp)); // assuming no macros in path for HISTFILE
+            setenv("HISTFILE",substring,1);
+        }
     } else if(strncmp(temp,"history",7) == 0) {
 
         if(strcmp(temp,"history") == 0) {
@@ -480,10 +557,7 @@ void runBuiltInCmd(char *cmdLine) {
         } else { // assume history n
 
             // Parse to get n
-            char tempHist[LINE_LN];
-            strcpy(tempHist,cmdLine);
-
-            char *token = strtok(tempHist," ");
+            char *token = strtok(temp," ");
             token = strtok(NULL," ");
 
             int n = atoi(token); // the last n commands to be printed
@@ -511,14 +585,19 @@ void runBuiltInCmd(char *cmdLine) {
 
         }
     } else if(strncmp(temp,"cd",2) == 0) {
+        
+        char *token = strtok(temp," ");
+        token = strtok(NULL," "); // path
+
+        if(chdir(token) < 0) {
+            perror(token);
+            return;
+        }
 
     } else if(strncmp(temp,"echo",4) == 0) {
 
-        char tempEnv[LINE_LN];
-        strcpy(tempEnv,cmdLine);
-
-        char *token = strtok(tempEnv," ");
-        token = strtok(NULL," "); // Constrain to $PATH, $HOME, $HISTFILE
+        char *token = strtok(temp," ");
+        token = strtok(NULL," "); // Constrained to $PATH, $HOME, $HISTFILE
 
         if(strcmp(token,"$PATH") == 0) {
             printf("%s\n", getenv("PATH"));
