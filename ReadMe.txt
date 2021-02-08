@@ -4,6 +4,9 @@ To my understanding, I've implemented everything that's listed
 in the assignment description, but the display looks slightly different.
 I apologize if something is amiss and I've missed that spec.
 
+To run program: make 
+To clean up files: make clean
+
 The following commands and examples are from running my shell program,
 following "Expected Program Behaviours" posted on course page:
 
