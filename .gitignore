@@ -58,5 +58,7 @@ dkms.conf
 bgSleep.c
 bgSleep
 .CIS3110_history
+.CIS3110_profile
 interactive
 interactive.c
+*.txt

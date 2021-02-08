@@ -1,8 +1,9 @@
-OBJ = myShell.o 
+OBJ = array.o myShell.o 
+DEPS = array.h
 CC = gcc
 CFLAGS = -std=gnu99 -Wpedantic
 
-%.o: %.c
+%.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -g -c -o $ $@ $<
 
 myShell: $(OBJ)

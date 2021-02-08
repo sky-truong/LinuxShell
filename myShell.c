@@ -7,20 +7,23 @@
 #include <string.h>     /* Strings */
 #include <signal.h>     /* Signals */
 #include <fcntl.h>
+#include "array.h"
 
 #define LINE_LN 256
 #define PATH_LN 512
 #define FILE_LN 50
 #define PROFILE_FILE ".CIS3110_profile"
 #define HISTORY_FILE ".CIS3110_history"
+#define CAPACITY 50 // capacity of background processes
 
 /**
  * Program: myShell
  * Author: Pham Sky Truong
- * Date of Last Revision: Feb 7th, 2021
+ * Date of Last Revision: Feb 8th, 2021
  * Summary: A Linux C Shell 
- * References: Example files from CIS*3110
+ * References: Example files from CIS*3110, array structs from CIS2520 assignment
  */
+
 
 /** 
  * Extra function
@@ -144,40 +147,26 @@ char *getLine(void) {
 }
 
 /**
- * Signal handler to reap child processes
- * References: https://fedemengo.github.io/blog/2018/02/SIGCHLD-handler.html
- */
-void killZombies(int signo) {
-    
-    pid_t childPid;
-    int status;
-
-    while((childPid = waitpid(-1, &status, WNOHANG)) > 0) {
-        printf("[%d] Reaped\n", childPid);
+ * Check if input is a command
+ */ 
+int isACommand(char *line) {
+    char temp[LINE_LN];
+    strcpy(temp,line);
+    for(int i = 0; i < strlen(temp); i++) {
+        if(temp[i] == '/') {
+            return 1;
+        }
     }
+    return 0;
 }
 
 /**
  * Fork and execute command, no pipe
  */
-void execArgs(char **args, int isBackground, int reOutFile, char *outFile, char reInFile, char *inFile) {
+void execArgs(char *command, char **args, struct Array *bkgrdJobs, int *bkgrdOrder, int isBackground, int reOutFile, char *outFile, char reInFile, char *inFile) {
     
     pid_t childPid;
     int status;
-
-    /**
-     * Set up signal handler
-     */
-    struct sigaction sigact;
-    sigact.sa_flags = 0;
-    sigemptyset(&sigact.sa_mask);
-
-    sigact.sa_handler = killZombies;
-    if(sigaction(SIGCHLD, &sigact, NULL) < 0) {
-        perror("sigaction()");
-        exit(1);
-    }
-    sigaction(SIGCHLD, &sigact, NULL);
 
     /**
      * Create a new process
@@ -192,7 +181,7 @@ void execArgs(char **args, int isBackground, int reOutFile, char *outFile, char 
      */
     if(!childPid) { // childPid == 0
         if(isBackground) {
-            printf("[%d] Started\n", getpid());
+            printf("[%d] %d\n", *bkgrdOrder, getpid());
         }
 
         // Redirect I/O files
@@ -204,10 +193,13 @@ void execArgs(char **args, int isBackground, int reOutFile, char *outFile, char 
         }
 
         if(execvp(args[0], args) == -1) {
-            perror(args[0]);
+            if(isACommand(command)) {
+                perror(args[0]);
+            } else {
+                fprintf(stderr,"%s: command not found\n", command);
+            }
             exit(EXIT_FAILURE);
         }
-        // execvpe(args[0], args, "/bin");
     }
 
     /**
@@ -221,16 +213,24 @@ void execArgs(char **args, int isBackground, int reOutFile, char *outFile, char 
         } while(!WIFEXITED(status) && !WIFSIGNALED(status));
     }
 
-    // Child is A background process, parent continues
-    // Use a signal handler to check and reap child
+    // Child is a background process, parent continues
+    if(isBackground) {
+        appendItem(bkgrdJobs, (*bkgrdOrder), command, &childPid); // save background processes to a list
+        (*bkgrdOrder)++; // update no. of background processes
+    }
 
-    // pid_t somekidpid;
-    // if((somekidpid = waitpid(-1, &status, WNOHANG)) > 0) {
-    //     printf("[%d] Reaped\n", somekidpid);
-    // }
-
-    sigact.sa_handler = SIG_DFL;
-    sigaction(SIGCHLD, &sigact, NULL);
+    // Loop through saved background processes to collect zombies
+    pid_t aPid;
+    int pidOrder;
+    for(int i = 0; i < bkgrdJobs->nel; i++) {
+        char tempString[LINE_LN];
+        strcpy(tempString, bkgrdJobs->commands[i]);
+        readItem(bkgrdJobs,i,&aPid);
+        pidOrder = bkgrdJobs->orders[i];
+        if((waitpid(aPid, &status, WNOHANG)) > 0) { // Check without blocking
+            printf("[%d] + %d Done \t %s\n", pidOrder, aPid, tempString);
+        }
+    }
 }
 
 /**
@@ -337,40 +337,6 @@ void execArgsPipe(char **args, char **argsPipe, int reOutFile, char *outFile, ch
 }
 
 /**
- * Get $PATH
- */
-void getPathHome(char *PATH, char *HOME) {
-
-    char *line = NULL;
-    size_t len = 0;
-    ssize_t size;
-
-    FILE *fpProfile = fopen(PROFILE_FILE, "r");
-
-    size = getline(&line, &len, fpProfile);
-
-    while(size >= 0) {
-        size = getline(&line, &len, fpProfile);
-    }
-    free(line);
-    fclose(fpProfile);
-}
-
-/**
- * Create history command list
- */
-char **createHistoryCmdList(int capacity) {
-
-    char **cmdHistory = malloc(sizeof(char*) * capacity); // initiate to store 50 commands
-    if(!cmdHistory) {
-        fprintf(stderr,"Error: Out of buffer\n");
-        return NULL;
-    }
-
-    return cmdHistory;
-}
-
-/**
  * Return number of commands in history file
  */
 int numCmds(void) {
@@ -413,21 +379,6 @@ void addToCmdHistoryFile(char *line) {
     fclose(fpHistory);
 }
 
-// void addToCmdHistory(char *line, char **cmdHistory, int cmdCount) {
-//     cmdHistory[cmdCount-1] = malloc(sizeof(char) * LINE_LN);
-//     strcpy(cmdHistory[cmdCount-1],line);
-// }
-
-/**
- * Delete command history
- */
-void delCmdHistory(char **cmdHistory, int *cmdCount) {
-    for(int i = 0; i < (*cmdCount); i++) {
-        free(cmdHistory[i]);
-    }
-    *cmdCount = 0;
-}
-
 /**
  * Check if user input is a built-in command
  */
@@ -446,6 +397,69 @@ int isBuiltInCmd(char *line) {
 }
 
 /**
+ * Set env PATH
+ */
+void setenvPATH(char *line) {
+
+    char temp[PATH_LN];
+    strcpy(temp,line);
+
+    char substring[PATH_LN];
+    memcpy(substring,&temp[12],strlen(temp)); // path with possible macros
+
+    char tempEnv[5];
+    char *path = malloc(sizeof(char) * PATH_LN);
+
+    int i, j, k = 0;
+    int hasMacro = 0;
+
+    for(i = 0; i < strlen(substring); i++) {
+
+        if(substring[i] != '$') { // grab other chars
+            // temp char holder
+            char c[2];
+            c[0] = substring[i];
+            c[1] = '\0';
+
+            strncat(path,c,1); // concat each char to final path
+
+        } else { // $PATH, $HOME
+
+            for(j = i+1; j < (i+5); j++) {
+                tempEnv[k] = substring[j];
+                k++;
+            }
+            tempEnv[k] = '\0';
+            k = 0; // reset k for next envp macro
+            hasMacro = 1;
+            i += 4; // move index past the macro
+
+            // Replace macro with its full path
+            char fullEnv[PATH_LN];
+            if(strcmp(tempEnv,"PATH") == 0) {
+                char *tempPATH = getenv("PATH");
+                strcpy(fullEnv,tempPATH);
+            } else if(strcmp(tempEnv,"HOME") == 0) {
+                char *tempHOME = getenv("HOME");
+                strcpy(fullEnv,tempHOME);
+            }
+
+            // Loop through fullEnv to add to path
+            for(int g = 0; g < strlen(fullEnv); g++) {
+                // temp char holder
+                char c[2];
+                c[0] = fullEnv[g];
+                c[1] = '\0';
+
+                strncat(path,c,1); // concat each char to final path
+            }
+        }
+    }
+    setenv("PATH",path,1);
+    free(path);
+}
+
+/**
  * Run built-in commands
  */
 void runBuiltInCmd(char *cmdLine) {
@@ -458,50 +472,7 @@ void runBuiltInCmd(char *cmdLine) {
         char substring[PATH_LN];
 
         if(strncmp(temp,"export PATH=",12) == 0) {
-
-            memcpy(substring,&temp[12],strlen(temp)); // path with possible macros
-            char tempEnv[5];
-            char path[PATH_LN];
-            int i, j, f, k = 0;
-            int hasMacro = 0;
-
-            for(i = 0; i < strlen(substring); i++) {
-
-                if(substring[i] != '$') { // grab other chars
-                    path[f] = substring[i];
-                    f++;
-                } else { // $PATH, $HOME
-    
-                    for(j = i+1; j < (i+5); j++) {
-                        tempEnv[k] = substring[j];
-                        k++;
-                    }
-                    tempEnv[k] = '\0';
-                    k = 0; // reset k for next envp macro
-                    hasMacro = 1;
-                    i += 4; // move index past the macro
-
-                    // Replace macro with its full path
-                    char fullEnv[PATH_LN];
-                    if(strcmp(tempEnv,"PATH") == 0) {
-                        char *tempPATH = getenv("PATH");
-                        strcpy(fullEnv,tempPATH);
-                    } else if(strcmp(tempEnv,"HOME") == 0) {
-                        char *tempHOME = getenv("HOME");
-                        strcpy(fullEnv,tempHOME);
-                    }
-
-                    // Loop through fullEnv to add to path
-                    for(int g = 0; g < strlen(fullEnv); g++) {
-                        path[f] = fullEnv[g];
-                        f++;
-                    }
-                }
-            }
-            path[f] = '\0';
-
-            setenv("PATH",path,1);
-
+            setenvPATH(cmdLine);
         } else if(strncmp(temp,"export HOME=",12) == 0) {
             memcpy(substring,&temp[12],strlen(temp)); // assuming no macros in path for HOME
             setenv("HOME",substring,1);
@@ -565,13 +536,17 @@ void runBuiltInCmd(char *cmdLine) {
 
         }
     } else if(strncmp(temp,"cd",2) == 0) {
-        
-        char *token = strtok(temp," ");
-        token = strtok(NULL," "); // path
 
-        if(chdir(token) < 0) {
-            perror(token);
-            return;
+        if(strncmp(temp,"cd ~",4) == 0) { // HOME = directory that shell was initialized
+            chdir(getenv("HOME"));
+        } else {
+            char *token = strtok(temp," ");
+            token = strtok(NULL," "); // path
+
+            if(chdir(token) < 0) {
+                perror(token);
+                return;
+            }
         }
 
     } else if(strncmp(temp,"echo",4) == 0) {
@@ -589,35 +564,93 @@ void runBuiltInCmd(char *cmdLine) {
     }
 }
 
+/**
+ * Set initial env HOME found in .CIS3110_profile
+ */
+void setInitEnvHOME(void) {
+
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t size;
+    char substring[PATH_LN];
+
+    FILE *fpProfile = fopen(PROFILE_FILE, "r");
+
+    size = getline(&line, &len, fpProfile);
+    
+    while(size >= 0) {
+        if(strncmp(line,"export HOME=",12) == 0) {
+            memcpy(substring,&line[12],strlen(line)); // assuming no macros in path for HOME
+            setenv("HOME",substring,1);
+        }
+        size = getline(&line, &len, fpProfile);
+    }
+    free(line);
+    fclose(fpProfile);
+}
+
+/**
+ * Set initial env PATH found in .CIS3110_profile
+ */
+void setInitEnvPATH(void) {
+
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t size;
+    char substring[PATH_LN];
+    char *token;
+
+    FILE *fpProfile = fopen(PROFILE_FILE, "r");
+
+    size = getline(&line, &len, fpProfile);
+    
+    while(size >= 0) {
+        if(strncmp(line,"export PATH=",12) == 0) {
+            strtok(line, "\n");
+            setenvPATH(line);
+        }
+        size = getline(&line, &len, fpProfile);
+    }
+    free(line);
+    fclose(fpProfile);
+}
+
+
+/**
+ * Set initial PATH and HOME environment variables
+ * found in .CIS3110_profile
+ */
+void setenvPathHome(void) {
+    setInitEnvHOME();
+    setInitEnvPATH();
+}
 
 /**
  * Main program
  */
 int main(int argc, char *argv[]) {
 
-    /**
-     * Setting up environment variables
-     */
-
-    char PATH[LINE_LN];
-    char HOME[LINE_LN];
-
     FILE *fpProfile;
     FILE *fpHistory;
 
-    // HOME = cwd
-    // if(getcwd(HOME, sizeof(HOME)) == NULL) {
-    //     perror("getcwd()");
-    // }
+    /**
+     * Setting up initial environment variables
+     */
 
-    // /* Handle .CIS3110_profile */
-    // if(access(PROFILE_FILE, R_OK) == 0) {
-    //     getPath(PATH, HOME);
-    // }
-    // printf("HOME: %s\n", getenv("HOME"));
-    // setenv("PATH","/bin",1);
+    /* Set initial env PATH and HOME */
+    if(access(PROFILE_FILE, R_OK) == 0) { // Grab from .CIS3110_profile if exists
+        setenvPathHome();
+    } else {
+        fpProfile = fopen(PROFILE_FILE, "w+"); // create a blank file
+
+        setenv("PATH","/bin",1); // default
+
+        char cwd[LINE_LN];
+        setenv("HOME",getcwd(cwd,sizeof(cwd)),1); // default
+    }
 
     /* Set env $HISTFILE to .CIS3110_history */
+
     if(access(HISTORY_FILE, R_OK) == 0) {
         // fpHistory = fopen(HISTORY_FILE, "a+");
         setenv("HISTFILE", HISTORY_FILE, 1);
@@ -626,15 +659,17 @@ int main(int argc, char *argv[]) {
         setenv("HISTFILE", HISTORY_FILE, 1);
     }
 
+    /**
+     * Initialize an array of structs to hold background processes ID 
+     */
+    struct Array *bkgrdJobs = newArray(sizeof(pid_t), CAPACITY);
+    int bkgrdOrder = 1;
+
 
     /**
      * Shell run
      */
-
     char *line = NULL;
-    // char **cmdHistory = NULL;
-    // int capacity = 50;
-    // int cmdCount = 0;
     char **args = NULL;
     char outFile[FILE_LN], inFile[FILE_LN];
     int run = 1;
@@ -652,17 +687,20 @@ int main(int argc, char *argv[]) {
     line = getLine();
     strtok(line, "\n"); // Remove trailing \n
 
-    // cmdCount++;
     addToCmdHistoryFile(line);
 
     run = runShell(line); // exit/quit/q
 
     while(run) {
 
+        char tempString[LINE_LN];
+
         if(isBuiltInCmd(line)) { // export, history, cd, echo
             runBuiltInCmd(line);
 
         } else { // other shell commands
+
+            strcpy(tempString,line);
 
             /* Parse arguments */
             getArgsInfo(line, &argsCount, &hasPipe, &argsPipeCount);
@@ -679,7 +717,7 @@ int main(int argc, char *argv[]) {
 
             /* Fork and exec */
             if(!hasPipe) {
-                execArgs(args, isBackground, reOutFile, outFile, reInFile, inFile);
+                execArgs(tempString, args, bkgrdJobs, &bkgrdOrder, isBackground, reOutFile, outFile, reInFile, inFile);
             } else {
                 execArgsPipe(args, argsPipe, reOutFile, outFile, reInFile, inFile, reOutFilePipe, outFilePipe, reInFilePipe, inFilePipe);
             }
@@ -698,7 +736,6 @@ int main(int argc, char *argv[]) {
         line = getLine();
         strtok(line, "\n");
 
-        // cmdCount++;
         addToCmdHistoryFile(line);
 
         /* Continue? */
@@ -706,11 +743,23 @@ int main(int argc, char *argv[]) {
     }
 
     printf("myShell terminating...\n \n");
+
+    // Kill background processes that are still running
+    pid_t aPid;
+    int status;
+    for(int i = 0; i < bkgrdJobs->nel; i++) {
+        readItem(bkgrdJobs,i,&aPid);
+        if((waitpid(aPid, &status, WNOHANG)) == 0) { // Check without blocking
+            kill(aPid,SIGQUIT);
+        }
+    }
+
     printf("[Process completed]\n");
     
     if(!run) {
         free(line);
     }
+    freeArray(bkgrdJobs);
 
     // for(int i = 0; i < cmdCount; i++) {
     //     free(cmdHistory[i]);
